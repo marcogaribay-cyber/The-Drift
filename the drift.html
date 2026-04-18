@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>The Drift</title>
+    <style>
+        body { background: #000; color: #ccc; font-family: monospace; padding: 20px; line-height: 1.6; }
+        
+        /* THE FADING LOG */
+        #log { 
+            height: 200px; 
+            overflow: hidden; 
+            margin-top: 100px; /* Pushes text below the fixed dashboard */
+            border-bottom: 1px solid #222;
+        }
+        #log div { transition: opacity 1.5s ease; margin-bottom: 8px; }
+        #log div:nth-last-child(n+7) { opacity: 0.05; }
+        #log div:nth-last-child(6) { opacity: 0.2; }
+        #log div:nth-last-child(5) { opacity: 0.4; }
+        #log div:nth-last-child(4) { opacity: 0.6; }
+        #log div:nth-last-child(3) { opacity: 0.8; }
+        .new-entry { color: #fff; opacity: 0; animation: fadeIn 0.5s forwards; }
+        @keyframes fadeIn { to { opacity: 1; } }
+       
+        /* DASHBOARD STYLES */
+        #vitals-panel {
+            position: fixed; top: 0; left: 0; width: 100%;
+            background: #000; border-bottom: 2px solid #1a1a1a;
+            display: flex; justify-content: space-around; padding: 15px 0;
+            z-index: 1000;
+        }
+        .bar-container { width: 180px; height: 8px; background: #111; border: 1px solid #333; margin-top: 5px; }
+        .bar { height: 100%; width: 100%; background-color: #00ffcc; transition: width 0.5s, background-color 1s; }
+        .stat-label { font-size: 10px; color: #555; letter-spacing: 1px; }
+       
+        /* BUTTONS */
+        button { background: none; border: 1px solid #555; color: #fff; padding: 10px 15px; cursor: pointer; margin: 5px 0; display: block; width: 350px; text-align: left; }
+        button:hover:not(:disabled) { border-color: #fff; background: #111; }
+        button:disabled { color: #444; border-color: #222; cursor: default; }
+        .hidden { display: none !important; }
+
+        /* THE BLACKOUT EFFECT */
+        @keyframes lightFlicker { 0% { opacity: 1; } 5% { opacity: 0.3; } 15% { opacity: 0.2; } 100% { opacity: 1; } }
+        .blackout-effect { animation: lightFlicker 0.3s infinite; background-color: #100 !important; }
+    </style>
+</head>
+<body>
+
+    <div id="vitals-panel">
+        <div>
+            <div class="stat-label">[SYS_OXY_LEVEL]</div>
+            <div class="bar-container"><div id="ox-bar" class="bar"></div></div>
+        </div>
+        <div>
+            <div class="stat-label">[SYS_THERM_CORE]</div>
+            <div class="bar-container"><div id="temp-bar" class="bar"></div></div>
+        </div>
+        <div>
+            <div class="stat-label">[SYS_PWR_LOAD]</div>
+            <div style="color:#fff; font-size:14px; margin-top:2px;">
+                <span id="power-use">5</span> / <span id="power-max">10</span>MW
+            </div>
+        </div>
+        <div style="font-size:12px; color:#888;">
+            METAL: <span id="scrap">0</span> | WIRE: <span id="wire">0</span> | CHIPS: <span id="chips">0</span>
+            <span id="ice-display" class="hidden"> | ICE: <span id="ice">0</span></span>
+        </div>
+    </div>
+
+    <div id="log">The pod is freezing. Systems are dark.</div>
+
+    <hr>
+
+    <div id="controls">
+        <div id="breaker-box" class="hidden">
+            <p style="color: #ffaa00;">[ POWER MANAGEMENT ]</p>
+            <button id="break-pod" onclick="togglePower('pod')">Pod Life Support: ON</button>
+            <button id="break-med" class="hidden" onclick="togglePower('med')">Medbay Systems: OFF</button>
+            <hr>
+        </div>
+
+        <button id="btn-warm" onclick="rubHands()">Rub hands for warmth</button>
+        <button id="btn-collect" class="hidden" onclick="collectScrap()">Search wreckage</button>
+        <button id="btn-nav" class="hidden" onclick="goToMedbay()">Go to Medbay</button>
+        <button id="btn-locker" class="hidden" onclick="openLocker()">Force open the locker</button>
+
+        <div id="build-menu" class="hidden">
+            <hr>
+            <button id="btn-build-scrubber" onclick="buildScrubber()">Patch Scrubber (10 Metal)</button>
+            <button id="btn-build-heater" class="hidden" onclick="buildHeater()">Fix Heater (15 Metal, 2 Wire)</button>
+            <button id="btn-build-comms" class="hidden" onclick="buildComms()">Repair Comms (25 Metal, 5 Chips)</button>
+        </div>
+    </div>
+
+<script>
+    let temp = 2, oxygen = 100, scrap = 0, wire = 0, chips = 0, ice = 0;
+    let powerMax = 10, powerUse = 5, clickCount = 0;
+    let hasScrubber = false, hasHeater = false, hasComms = false, sawLight = false;
+    let isDead = false, isSearching = false, isBlackout = false;
+    let systems = { pod: true, med: false };
+
+    function log(text) {
+        const logDiv = document.getElementById('log');
+        logDiv.innerHTML += `<div class="new-entry">> ${text}</div>`;
+        logDiv.scrollTop = logDiv.scrollHeight; 
+    }
+
+    function updateUI() {
+        if (isDead) return;
+       
+        const oxBar = document.getElementById('ox-bar');
+        const tempBar = document.getElementById('temp-bar');
+       
+        oxBar.style.width = oxygen + "%";
+        let tempPercent = (temp / 293) * 100;
+        tempBar.style.width = Math.min(tempPercent, 100) + "%";
+       
+        // Fixed typos: changed 'obBar' to 'oxBar' and corrected 'background.Color'
+        if (oxygen < 25) oxBar.style.backgroundColor = "#ff4d4d";
+        else oxBar.style.backgroundColor = "#00ffcc";
+       
+        if (temp < 100) tempBar.style.backgroundColor = "#4da6ff";
+        else if (temp >= 290) tempBar.style.backgroundColor = "#ffaa00";
+        else tempBar.style.backgroundColor = "#00ffcc";
+       
+        document.getElementById('scrap').innerText = scrap;
+        document.getElementById('wire').innerText = wire;
+        document.getElementById('chips').innerText = chips;
+        document.getElementById('power-use').innerText = powerUse;
+        document.getElementById('power-max').innerText = powerMax;
+
+        if (ice > 0) {
+            document.getElementById('ice-display').classList.remove('hidden');
+            document.getElementById('ice').innerText = ice;
+        }
+
+        if (scrap > 0) {
+            document.getElementById('btn-collect').classList.remove('hidden');
+            document.getElementById('build-menu').classList.remove('hidden');
+        }
+
+        if (scrap >= 20 && !hasComms && !sawLight) {
+            log("A rhythm... there. A green light is flashing in the distant wreckage.");
+            sawLight = true;
+        }
+
+        if (scrap >= 5 && !hasHeater) document.getElementById('btn-build-heater').classList.remove('hidden');
+        if (scrap >= 15 && !hasComms) document.getElementById('btn-build-comms').classList.remove('hidden');
+        if (hasComms && !isBlackout) document.getElementById('btn-nav').classList.remove('hidden');
+
+        document.getElementById('btn-build-scrubber').disabled = (scrap < 10);
+        document.getElementById('btn-build-heater').disabled = (scrap < 15 || wire < 2);
+        document.getElementById('btn-build-comms').disabled = (scrap < 25 || chips < 5);
+    }
+
+    function rubHands() {
+        if (isDead || hasHeater) return;
+        temp += 2; clickCount++;
+        if (temp > 15 && scrap === 0) {
+            log("Frost melts. Scrap is floating nearby.");
+            scrap = 1;
+        }
+        updateUI();
+    }
+
+    function collectScrap() {
+        if (isDead || isSearching) return;
+        isSearching = true;
+        document.getElementById('btn-collect').disabled = true;
+       
+        setTimeout(() => {
+            let roll = Math.random();
+            if (roll > 0.96) { ice++; log("Found ice fragment."); }
+            else if (roll > 0.85) { chips++; log("Circuitry recovered."); }
+            else if (roll > 0.65) { wire++; log("Copper wire salvaged."); }
+            else {
+                if (scrap < 30) { scrap++; log("Metal plating recovered."); }
+                else { log("Inventory full."); }
+            }
+            isSearching = false;
+            document.getElementById('btn-collect').disabled = false;
+            updateUI();
+        }, (temp < 20 ? 3000 : 1000));
+    }
+
+    function buildScrubber() {
+        if (scrap < 10) return;
+        scrap -= 10; hasScrubber = true;
+        log("Scrubber fixed. Air tastes metallic.");
+        document.getElementById('btn-build-scrubber').classList.add('hidden');
+        updateUI();
+    }
+
+    function buildHeater() {
+        if (scrap < 15 || wire < 2) return;
+        scrap -= 15; wire -= 2; hasHeater = true; temp = 293;
+        log("Heater hums to life. Warmth!");
+        document.getElementById('btn-build-heater').classList.add('hidden');
+        document.getElementById('btn-warm').classList.add('hidden');
+        updateUI();
+    }
+
+    function buildComms() {
+        if (scrap < 25 || chips < 5) return;
+        scrap -= 25; chips -= 5; hasComms = true;
+        log("Comms online. Coordinates received: Medbay.");
+        document.getElementById('btn-build-comms').classList.add('hidden');
+        updateUI();
+    }
+
+    function goToMedbay() {
+        log("Traveling to Medbay...");
+        document.getElementById('btn-nav').disabled = true;
+        setTimeout(() => {
+            log("Medbay reached. Power grid destabilizing!");
+            document.getElementById('breaker-box').classList.remove('hidden');
+            document.getElementById('break-med').classList.remove('hidden');
+            document.getElementById('btn-locker').classList.remove('hidden');
+            systems.med = true;
+            togglePower('med');
+        }, 2000);
+    }
+
+    function togglePower(room) {
+        systems[room] = !systems[room];
+        document.getElementById('break-pod').innerText = "Pod Life Support: " + (systems.pod ? "ON" : "OFF");
+        document.getElementById('break-med').innerText = "Medbay Systems: " + (systems.med ? "ON" : "OFF");
+        powerUse = (systems.pod ? 5 : 0) + (systems.med ? 8 : 0);
+        isBlackout = (powerUse > powerMax);
+        updateUI();
+    }
+
+    function openLocker() {
+        if (!systems.med) { log("Locker is electronically locked."); return; }
+        log("Locker open. Found a data slate.");
+        document.getElementById('btn-locker').classList.add('hidden');
+    }
+
+    setInterval(() => {
+        if (isDead) return;
+        if (isBlackout) {
+            document.body.classList.add('blackout-effect');
+            oxygen -= 3;
+        } else {
+            document.body.classList.remove('blackout-effect');
+            if (hasScrubber && systems.pod) oxygen = Math.min(oxygen + 1, 100);
+            else oxygen -= 1;
+        }
+        if (clickCount > 3) { oxygen -= 4; clickCount = 0; }
+        if (temp > 2 && !hasHeater) temp -= 1;
+        if (oxygen <= 0) { isDead = true; log("OXYGEN DEPLETED. DARKNESS."); }
+        updateUI();
+    }, 1000);
+</script>
+</body>
+</html>
+
+
